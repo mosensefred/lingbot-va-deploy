@@ -10,6 +10,22 @@
 
 **AutoDL 部分区域/镜像不带 NVIDIA Vulkan 驱动，会导致 sapien 渲染直接失败（Render Error）。** 这是整个部署最容易翻车、且换镜像/换依赖都救不了的地方，务必在租卡后**第一时间验证**（见 §6）。
 
+### 整体部署流程一览
+
+```mermaid
+flowchart TD
+    A["租 RTX 4090 实例"] --> B{"find libvulkan_nvidia.so<br/>有输出？"}
+    B -->|"有（GPU Vulkan 可用）"| C["建 conda 3.10 环境"]
+    B -->|"无（缺 Vulkan）"| Z["联系客服换带 Vulkan 的实例"]
+    C --> D["装 torch cu126<br/>关代理"]
+    D --> E["ModelScope 下权重 23G<br/>关代理"]
+    E --> F["git clone RoboTwin<br/>开代理"]
+    F --> G["装 sapien/pytorch3d/curobo<br/>git 包开代理 / PyPI 包关代理"]
+    G --> H["改三处配置 + 修 flash_attn import"]
+    H --> I["起服务端 + 客户端"]
+    I --> J["验证结果视频与指标"]
+```
+
 ---
 
 ## 1. 租卡与磁盘：数据盘要够大、换区会丢数据
@@ -49,6 +65,20 @@ python -V   # 必须是 3.10.x
 
 **核心原则：装 PyPI 包时关代理，拉 GitHub 时开代理。**
 
+```mermaid
+flowchart LR
+    subgraph OFF["关代理（unset http_proxy https_proxy）"]
+        A1["装 torch"]
+        A2["装 PyPI 依赖"]
+        A3["ModelScope 下权重"]
+    end
+    subgraph ON["开代理（source /etc/network_turbo）"]
+        B1["git clone GitHub"]
+        B2["pytorch3d git 编译"]
+        B3["curobo git 编译"]
+    end
+```
+
 | 操作 | 代理状态 |
 |---|---|
 | 装 torch / pip 依赖 / ModelScope 下权重 | **关**（`unset http_proxy https_proxy all_proxy`）|
@@ -58,16 +88,18 @@ python -V   # 必须是 3.10.x
 
 ## 4. torch 安装：用国内镜像，别用官方源
 
-官方 `download.pytorch.org` 在国内慢到卡死。**阿里云镜像有 torch cu126 轮子**：
+官方 `download.pytorch.org` 在国内慢到卡死。实测关代理后官方源能到 ~5.7MB/s，可接受；其余小依赖走清华源。
 
 ```bash
 pip install torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 \
-    --index-url https://mirrors.aliyun.com/pytorch-wheels/cu126/
+    --index-url https://download.pytorch.org/whl/cu126
+# 其余依赖
+pip install websockets einops diffusers==0.36.0 transformers==4.55.2 \
+    accelerate msgpack opencv-python matplotlib ftfy easydict \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
-> 注意：aliyun 的 `pytorch-wheels` 页面是 JS 渲染的，**浏览器能看但 pip 解析不了**，报 `from versions: none` 是正常的 —— 真正可用的是**官方 `download.pytorch.org` 的 nginx 目录**（pip 能解析），只是慢。实测关代理后官方源能到 ~5.7MB/s，可接受。
->
-> 修正：cu126 的 torch 用官方 `--index-url https://download.pytorch.org/whl/cu126`（关代理后速度尚可），其余小依赖走清华源 `-i https://pypi.tuna.tsinghua.edu.cn/simple`。
+> ⚠️ 坑：aliyun 的 `pytorch-wheels` 页面是 JS 渲染的，**浏览器能看但 pip 解析不了**，报 `from versions: none`。所以 torch 别用 aliyun pytorch-wheels，用官方 `download.pytorch.org`（那是 nginx 目录，pip 能解析）。
 
 验证：
 ```bash
@@ -140,7 +172,22 @@ RuntimeError: vk::PhysicalDevice::createDeviceUnique: ErrorExtensionNotPresent
 
 AutoDL 部分区域/镜像的容器里，NVIDIA 驱动**只挂载了 CUDA/GL/EGL 库，没有挂载 Vulkan ICD 库**（`libvulkan_nvidia.so`）。
 
-验证（**租卡后第一件事就跑这个**）：
+### 排查决策树
+
+```mermaid
+flowchart TD
+    A["客户端报 Render Error"] --> B{"find libvulkan_nvidia.so<br/>有输出？"}
+    B -->|"有"| C{"vulkaninfo 列出 4090？"}
+    B -->|"无"| D["AutoDL 区域不带 NVIDIA Vulkan"]
+    C -->|"列出 4090"| E["GPU Vulkan 正常<br/>排查 ICD json 路径"]
+    C -->|"只有 llvmpipe"| F["尝试软件渲染 llvmpipe"]
+    D --> G["联系客服换带 Vulkan 的实例"]
+    F --> H{"llvmpipe 版本？"}
+    H -->|"LLVM 15 太老"| I["ErrorExtensionNotPresent<br/>软件渲染也不通"]
+    I --> G
+```
+
+### 验证命令（租卡后第一件事就跑这个）
 
 ```bash
 find / -name "libvulkan_nvidia*" 2>/dev/null
