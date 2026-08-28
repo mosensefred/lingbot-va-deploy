@@ -146,17 +146,17 @@ python wan_va/wan_va_server.py --config-name robotwin_i2va
 |---|---|
 | ![第 0 帧](assets/frame_start.png) | ![第 76 帧](assets/frame_end.png) |
 
-**画面布局说明**（由分辨率 320×384 = 256 + 128 推断）：
+**画面布局说明**：三路输入相机原始尺寸均为 **320×224**，模型将其合成到 320×384 的预测视频
+（cam_high 顶部 + 左右腕部相机底部并排）。
 
-```text
-┌─────────────────────────┐
-│        cam_high          │  320 × 256（主相机，顶部）
-├────────────┬────────────┤
-│  left_wrist│ right_wrist │  各 160 × 128（腕部相机，底部并排）
-└────────────┴────────────┘
-```
+### 4.4 输入观测 vs 预测视频
 
-### 4.4 动作轨迹热力图
+三路输入观测（cam_high / cam_left_wrist / cam_right_wrist，各 320×224）与模型预测视频
+（t=0 重建 / t=38 / t=76）的对比：
+
+![输入观测 vs 预测视频](assets/pred_vs_input.png)
+
+### 4.5 动作轨迹热力图
 
 把 10 组 `actions_*.pt` 按 chunk 顺序拼接，得到 **30 通道 × 320 步** 的动作矩阵，
 其中 0~15 通道为有效维度（左臂 EEF 7 维 + 左夹爪 1 维 + 右臂 EEF 7 维 + 右夹爪 1 维），
@@ -164,7 +164,7 @@ python wan_va/wan_va_server.py --config-name robotwin_i2va
 
 ![VLA 动作轨迹热力图](assets/action_heatmap.png)
 
-### 4.5 张量校验
+### 4.6 张量校验
 
 | 张量 | shape | dtype | 值域 | NaN |
 |---|---|---|---|---|
