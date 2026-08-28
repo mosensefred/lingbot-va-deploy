@@ -6,6 +6,7 @@ LingBot-VA deployment checklist and cloud evaluation scripts
 
 | 文件 | 说明 |
 |---|---|
+| [LOCAL_DEPLOY_SUMMARY.md](LOCAL_DEPLOY_SUMMARY.md) | 本地部署总结：推理复现 + 后训练（含流程图与推理结果图）|
 | [DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md) | 部署与运行清单（硬性门槛 / 安装 / 权重 / 配置 / 训练）|
 | [CLOUD_DEPLOY.md](CLOUD_DEPLOY.md) | 云上从零跑通 RoboTwin 评测指南 |
 | [AUTODL_TROUBLESHOOTING.md](AUTODL_TROUBLESHOOTING.md) | 🔥 **AutoDL 部署踩坑实战记录**（每个坑含报错原文 + 根因 + 解决命令，强烈建议部署前先读）|
