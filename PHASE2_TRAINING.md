@@ -155,14 +155,14 @@ python -m torch.distributed.run --nproc_per_node=1 --master_port 29501 \
 
 ## 六、后续训练步骤（待办）
 
-1. **先解决冒烟测试的 fork 死锁问题**（见「八、冒烟测试诊断」），再谈正式训练。
-2. **把 `num_steps` 改回 50000**。
-3. **解决 checkpoint 磁盘问题** ⚠️：
+1. **把 `num_steps` 改回 50000**（当前为冒烟测试的 3）。
+2. **解决 checkpoint 磁盘问题** ⚠️：
    - 单 checkpoint ≈ **9.5GB**（bf16 transformer）。
    - `save_interval=1000` × `num_steps=50000` → **50 个 checkpoint ≈ 475GB**。
    - Data2TB 解压后仅剩 **124GB**，根分区仅剩 114GB，**都存不下 475GB**。
    - 需要决策：减少 `save_interval`、只保留最后 N 个 checkpoint、或换更大磁盘。
-4. **监控训练指标**：wandb 已关闭，需靠终端 `progress_bar` 输出观察 loss；若要曲线图需配真实 wandb 凭据。
+3. **监控训练指标**：wandb 已关闭，需靠终端 `progress_bar` 输出观察 loss；若要曲线图需配真实 wandb 凭据。
+4. **（可选，后续深入）研究 `multiprocessing.Pool` 卡住的底层机制**：是「fork 后 CUDA 上下文损坏」，还是「DDP 每 GPU 一进程 + 多进程数据构造叠加导致进程数爆炸 / 资源耗尽」？issue #32 里 GostInShell 倾向后者，但本机尚未用栈/资源监控直接证明。当前只需知道「Pool 是元凶、ThreadPool 可解」，暂不阻塞训练。
 
 ---
 
