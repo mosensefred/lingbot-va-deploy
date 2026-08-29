@@ -98,6 +98,23 @@ robotwin-clean-and-aug-lerobot/
 
 `train.py` 加载 transformer 时**硬编码 `attn_mode="flex"`**（[train.py:88](../../lingbot-va/wan_va/train.py#L88)），会覆盖模型目录 `transformer/config.json` 里的 `"torch"`。所以训练**不需要**手动改 config.json（那个只在推理时读取）。
 
+### 2.6 checkpoint 不支持断点续训（官方未答复）
+
+`save_checkpoint` 只保存模型权重（`diffusion_pytorch_model.safetensors` + `config.json`），**不保存 optimizer state**。续训功能是「半成品」：
+
+| 位置 | 代码 | 状态 |
+|---|---|---|
+| `save_checkpoint` 保存 optimizer state | 第 339-342 行 | ❌ 被注释 |
+| `save_checkpoint` 保存 `training_state.pt` | 第 367-374 行 | ❌ 被注释 |
+| 调用 `_load_training_state` | 第 148-149 行 | ❌ 被注释 |
+| `_load_training_state` 方法体 | 第 391-420 行 | ✅ 完整实现但未被调用 |
+
+含义：
+- checkpoint **可用于推理/评测**（模型权重完整）。
+- checkpoint **不能用于断点续训**——训练中断只能从头开始。
+
+官方 issue [#72「Train from the interrupted checkpoint」](https://github.com/Robbyant/lingbot-va/issues/72) 问的正是此事，**0 回复、OPEN 状态**，官方未说明为何注释。推测（无佐证）：FSDP 下 optimizer state 的 shard 映射易出错，或存储成本翻倍（optimizer state 约为模型权重 2 倍，fp32 下可能 40GB+）。
+
 ---
 
 ## 三、单任务数据加载验证（已通过）
