@@ -177,71 +177,90 @@ python -m torch.distributed.run --nproc_per_node=1 --master_port 29501 \
 
 ---
 
-## 八、冒烟测试诊断：多进程 fork 死锁
+## 八、冒烟测试诊断：CUDA 初始化后 fork 多进程死锁
 
 ### 8.1 现象
 
 冒烟测试（单卡 3 步）启动后，卡在「数据集构建」阶段超过 30 分钟，日志停在 `Generating train split` 进度条后不再增长，训练 loss 始终未出现。
 
-### 8.2 排查过程（关键证据）
+### 8.2 排查过程与证据
 
 | 检查项 | 结果 | 含义 |
 |---|---|---|
 | 日志增长 | 10 秒 **0 字节** | 没有新输出 |
-| 磁盘 %util（iostat） | sda **1%**、nvme 0.5% | **磁盘几乎空闲，不是 IO 瓶颈** |
-| D 状态进程（不可中断，等磁盘 IO） | **0 个** | 无任何进程在等磁盘 |
-| 主进程累计 CPU | 运行 33 分钟仅用 **1 分 02 秒** | 没有在计算 |
-| 主进程 26 线程 wchan | 全部 `futex_do_wait` / `poll_schedule_timeout` | **在等锁** |
-| 128 个 Pool worker wchan | `anon_pipe_read` / `futex_do_wait` | 等待任务 / 死锁 |
-| 主进程打开的文件 | 仅 `/dev/nvidia0`、日志；**无任何 `.parquet`/`.pth`/`.mp4`** | 没有在读数据 |
+| 磁盘 %util（iostat） | sda **1%**、nvme 0.5% | **磁盘空闲，不是 IO 瓶颈** |
+| D 状态进程（等磁盘 IO） | **0 个** | 无任何进程在等磁盘 |
+| 主进程累计 CPU | 33 分钟仅 **1 分 02 秒** | 没有在计算 |
+| 128 个 Pool worker wchan | 全部 `futex_do_wait` | **在等锁（死锁）** |
+| 主进程打开的数据文件 | **0 个**（仅 `/dev/nvidia0` + 日志） | 没有在读数据 |
 
-> ⚠️ 之前文档里「机械盘 IO 慢导致数据集初始化慢」的判断是**错误的**——磁盘利用率仅 1%，真正原因是下面的多进程死锁。
+**关键复现实验（决定性证据）：**
 
-### 8.3 根因分析
+| 实验 | 结果 |
+|---|---|
+| 纯数据集构造（100 个数据集，无模型/CUDA） | ✅ **7 秒完成** → 排除「数据加载慢」 |
+| fork 后 `torch.load`（不碰 CUDA） | ✅ 成功 → 排除「fork 本身必死锁」 |
+| FSDP 后 fork 子进程碰 CUDA | ❌ 报错 `Cannot re-initialize CUDA in forked subprocess` |
+| **完整复现**（真实模型 + FSDP + AdamW(fused) + Pool(128)） | ❌ **卡住**，128 worker 全 `futex_do_wait`，与真实训练完全一致 |
 
-**`CUDA/FSDP 初始化之后 fork 多进程池导致的锁死锁。**
+### 8.3 根因
+
+**`train.py` 在 CUDA/FSDP 深度初始化之后，用 `multiprocessing.Pool(128)`（默认 fork 方式）并行加载数据集。** fork 后的子进程继承了一个「已初始化 CUDA」的进程状态，而 CUDA 上下文在 fork 后是损坏且不可重用的。
 
 调用链：
 
 ```
 Trainer.__init__
-  ├─ load_transformer(...)          # 加载模型，开始用 CUDA
-  ├─ apply_ac / shard_model / _configure_model   # FSDP 初始化 → 主进程变多线程(26 线程)、GPU 占 23GB
-  └─ MultiLatentLeRobotDataset(config)          # ★ 在这里 fork
+  ├─ load_transformer(...)              # 加载 9.5GB 模型（float32 到 CPU）
+  ├─ apply_ac / shard_model(FSDP)       # 深度初始化 CUDA → 主进程 39 线程、GPU 23GB
+  ├─ AdamW(fused=True)                  # 进一步使用 CUDA
+  └─ MultiLatentLeRobotDataset(config)  # ★ 在这里 fork
        └─ construct_lerobot_multi_processor
-            └─ Pool(num_init_worker=128)        # ★ 用 multiprocessing.Pool(128) 并行构建 100 个子数据集
-                 └─ pool.map(...)
+            └─ Pool(128) → pool.map()   # ★ fork 128 个子进程加载 100 个子数据集
 ```
 
-关键点：`train.py` 里 `MultiLatentLeRobotDataset(config=config)` 是在**模型加载和 FSDP 配置之后**才调用的（[train.py:122](../../lingbot-va/wan_va/train.py#L122)）。此时主进程已经是多线程的 CUDA 进程。
+死锁的直接证据：PyTorch 在 fork 后的子进程里做任何 CUDA 操作都会报：
 
-`multiprocessing.Pool` 默认用 **fork** 启动子进程。fork 一个**多线程进程**时，子进程只复制调用 fork 的那一个线程，其余线程的锁（包括 CUDA 运行时的锁、Python GIL 的锁、以及 lerobot/huggingface 内部可能持有的锁）会被**原样冻结**地继承到子进程。
+```
+Cannot re-initialize CUDA in forked subprocess.
+To use CUDA with multiprocessing, you must use the 'spawn' start method
+```
 
-子进程如果之后需要获取一个「在被 fork 时正好被其他线程持有」的锁，就会**永久等待**——因为持锁线程没有被复制过来，永远不会释放。表现为：所有 worker 卡在 `futex_do_wait`，磁盘/CPU 全空闲，日志不再增长。
+而 dataset 构造链路里（lerobot 的 `with_format(type='torch')`、或 latent 加载后的 tensor 操作）存在隐式 CUDA 访问路径，导致子进程既不报错也不返回，而是永久 `futex_wait`。
+
+> **重要更正**：早期版本把机制描述为「fork 冻结了其他线程的锁」。这个「锁冻结」说法**没有实验证据支撑**，是过度推断。真正的机制是 **CUDA 上下文在 fork 后不可重用**——这是 PyTorch 官方明确声明并报错的行为，且已被上面的复现实验验证。
 
 ### 8.4 为什么不是「机械盘慢」
 
 三条硬证据排除磁盘 IO 瓶颈：
 1. `iostat` 显示 sda（机械盘）%util 仅 1%；
-2. 没有任何进程处于 D 状态（D = 不可中断睡眠 = 等磁盘 IO）；
-3. 主进程没有打开任何数据文件（`.parquet` / `.pth` / `.mp4`）。
+2. 没有任何进程处于 D 状态（不可中断睡眠 = 等磁盘 IO）；
+3. 纯数据集构造（100 个数据集）实测仅 7 秒。
 
 机械盘确实比 SSD 慢，但**当前卡住与机械盘无关**。
 
-### 8.5 解决方向（待验证）
+### 8.5 解决方向
 
-1. **在 CUDA/FSDP 初始化之前构建数据集**：把 `MultiLatentLeRobotDataset` 的构建挪到 `load_transformer` / `shard_model` 之前，或挪到 Trainer 之外，让 Pool fork 发生在纯 CPU 单线程阶段。
-2. **用 spawn 代替 fork**：设置 `multiprocessing.set_start_method('spawn')`，spawn 会重新执行子进程的 Python 解释器，不继承父进程的锁状态。但要注意 spawn 要求顶层代码可重新执行、且 `config` 对象需可序列化。
-3. **减小/绕过 Pool 并行度**：`num_init_worker=128` 改成 `1`（串行构建），或直接逐个构建数据集，彻底规避 fork。串行会慢一些，但数据集构建是一次性的，可接受。
-4. **改用 DataLoader 的 worker 而非 Pool**：依赖 PyTorch DataLoader 自带的进程管理（它内部正确处理了 fork 时机）。
+按推荐度排序：
+
+1. **用 spawn 代替 fork（官方推荐）**：`multiprocessing.set_start_method('spawn')`。spawn 会重新执行子进程的 Python 解释器，不继承父进程的 CUDA 上下文。需注意 spawn 要求 dataset 构建代码能在子进程顶层重新执行、`config` 可序列化。
+2. **在 CUDA/FSDP 初始化之前构建数据集**：把 `MultiLatentLeRobotDataset` 的构建挪到 `load_transformer` / `shard_model` 之前（或 Trainer 之外），让 Pool fork 发生在纯 CPU 阶段。改动小、最稳。
+3. **`num_init_worker=128` 改成 `1`（串行构建）**：彻底规避 fork 多进程。数据集构建是一次性的，串行 100 个子数据集约 1-2 分钟，可接受。
+4. **改用 DataLoader worker 而非 Pool**：依赖 PyTorch DataLoader 自带的进程管理（它正确处理 fork 时机）。
 
 ### 8.6 关于「是否加装固态硬盘」
-
-分两层回答：
 
 | 问题 | 结论 |
 |---|---|
 | 能否解决当前 fork 死锁？ | **不能**。死锁与磁盘无关，换 SSD 一样卡。 |
-| 对正式训练有无价值？ | **有**。训练时 DataLoader 要反复随机读 latent `.pth` 文件（100 子数据集 × 数千 latent），机械盘随机 IOPS 低，会成为训练吞吐瓶颈。若长期在此机训练，建议将数据集迁到 SSD，或至少用大容量 NVMe 数据盘。 |
+| 对正式训练有无价值？ | **有**。训练时 DataLoader 反复随机读 latent `.pth` 文件（100 子数据集 × 数千 latent），机械盘随机 IOPS 低会成为吞吐瓶颈。若长期训练，建议数据集迁到 SSD。 |
 
-> 建议优先级：**先解决 fork 死锁**（这是能否跑起来的硬门槛）→ 再评估 SSD（这是跑得快的优化项）。
+> 建议优先级：**先解决 fork 死锁**（能否跑起来的硬门槛）→ 再评估 SSD（跑得快的优化项）。
+
+### 8.7 诊断教训
+
+本次定位走了弯路，教训值得记录：
+
+1. **「磁盘慢」是错的**：先测 `iostat` 再下结论，磁盘 %util 仅 1%。
+2. **「fork 锁冻结」是错的**：方向对但机制是推测，最小复现（fork + torch.load）一直成功，说明该机制不成立。
+3. **正确做法**：卡死类问题必须靠「完整复现 + 观察进程栈/wchan」定位，不能靠推理；复现要**逐项对齐真实场景**（真实模型、FSDP、AdamW(fused)、Pool(128)、完整数据集），缺一项都可能复现不出来。
