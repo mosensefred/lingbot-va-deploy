@@ -1,7 +1,7 @@
 # LingBot-VA 阶段二：后训练（本地单卡）
 
 > 本文档承接 `LOCAL_DEPLOY_SUMMARY.md` 的「六、阶段二：后训练」，记录后训练的实际执行结果与后续训练步骤。
-> 状态：**数据集就绪、配置就绪；冒烟测试已跑通（根因已定位并修复：`multiprocessing.Pool` → `ThreadPool`）**。
+> 状态：**正式训练进行中**（50000 步，单卡；冒烟测试已跑通，根因 `multiprocessing.Pool` → `ThreadPool` 已修复）。
 
 ---
 
@@ -18,11 +18,13 @@ flowchart TD
     F -->|卡住| H[诊断：Pool 多进程 hang]
     H --> I[修复：Pool → ThreadPool<br/>见第八章]
     I --> E
+    G --> J[正式训练进行中<br/>save_interval=10000]
 
     style B fill:#2e7d32,color:#fff
     style D fill:#2e7d32,color:#fff
     style H fill:#d03b3b,color:#fff
     style E fill:#eda100,color:#0b0b0b
+    style J fill:#2a78d6,color:#fff
 ```
 
 ---
@@ -38,6 +40,7 @@ flowchart TD
 | `save_root` 配置 | ✅ 完成 | 指向 Data2TB（避开根分区，checkpoint 大） |
 | 单任务数据加载 | ✅ 通过 | latents/actions/text_emb 张量规格全部对齐 |
 | 单卡训练冒烟测试 | ✅ **通过** | 3 步完成，latent_loss≈0.097、action_loss≈0.021；根因已修复（见第八章） |
+| **正式训练** | 🔄 **进行中** | 50000 步，单卡，`save_interval=10000`（5 个 checkpoint），约 25 小时 |
 
 ---
 
@@ -155,14 +158,11 @@ python -m torch.distributed.run --nproc_per_node=1 --master_port 29501 \
 
 ## 六、后续训练步骤（待办）
 
-1. **把 `num_steps` 改回 50000**（当前为冒烟测试的 3）。
-2. **解决 checkpoint 磁盘问题** ⚠️：
-   - 单 checkpoint ≈ **9.5GB**（bf16 transformer）。
-   - `save_interval=1000` × `num_steps=50000` → **50 个 checkpoint ≈ 475GB**。
-   - Data2TB 解压后仅剩 **124GB**，根分区仅剩 114GB，**都存不下 475GB**。
-   - 需要决策：减少 `save_interval`、只保留最后 N 个 checkpoint、或换更大磁盘。
-3. **监控训练指标**：wandb 已关闭，需靠终端 `progress_bar` 输出观察 loss；若要曲线图需配真实 wandb 凭据。
-4. **（可选，后续深入）研究 `multiprocessing.Pool` 卡住的底层机制**：是「fork 后 CUDA 上下文损坏」，还是「DDP 每 GPU 一进程 + 多进程数据构造叠加导致进程数爆炸 / 资源耗尽」？issue #32 里 GostInShell 倾向后者，但本机尚未用栈/资源监控直接证明。当前只需知道「Pool 是元凶、ThreadPool 可解」，暂不阻塞训练。
+- ✅ `num_steps` 已改回 50000。
+- ✅ checkpoint 磁盘问题已解决：`save_interval` 1000 → **10000**，50 个 checkpoint → **5 个**（约 47.5GB，数据盘放得下）。
+- ⬜ **训练完成后**：评估 loss 曲线与 checkpoint 效果，确认是否达到预期。
+- ⬜ **监控训练指标**：wandb 已关闭，需靠终端 `progress_bar` 输出观察 loss；若要曲线图需配真实 wandb 凭据。
+- ⬜ **（可选，后续深入）研究 `multiprocessing.Pool` 卡住的底层机制**：是「fork 后 CUDA 上下文损坏」，还是「DDP 每 GPU 一进程 + 多进程数据构造叠加导致进程数爆炸 / 资源耗尽」？issue #32 里 GostInShell 倾向后者，但本机尚未用栈/资源监控直接证明。当前只需知道「Pool 是元凶、ThreadPool 可解」，暂不阻塞训练。
 
 ---
 
