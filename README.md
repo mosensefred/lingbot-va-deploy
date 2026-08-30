@@ -19,7 +19,8 @@ LingBot-VA 部署、训练与二次开发记录。包含：从零部署、本地
 |---|---|
 | [LOCAL_DEPLOY_SUMMARY.md](LOCAL_DEPLOY_SUMMARY.md) | 本地部署总结：阶段一推理复现 + 阶段二后训练（含流程图与推理结果图）|
 | [PHASE2_TRAINING.md](PHASE2_TRAINING.md) | 阶段二后训练详细记录：配置、数据集、`Pool→ThreadPool` 诊断与修复、checkpoint 说明 |
-| [TRAINING_LOG.md](TRAINING_LOG.md) | 训练运行日志（进度 / loss / GPU 温度，持续更新）|
+| [TRAINING_REPORT.md](TRAINING_REPORT.md) | 训练报告：loss 分析、推理验证、动作对比、工程细节（训练完成后）|
+| [TRAINING_LOG.md](TRAINING_LOG.md) | 训练运行日志（进度 / loss / GPU 温度）|
 
 ### 3. 二次开发主线（加触觉模块）
 
