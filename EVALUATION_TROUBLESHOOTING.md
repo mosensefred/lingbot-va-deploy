@@ -300,3 +300,30 @@ results/stseed-10000/visualization/adjust_bottle/
 ### 下一步
 - 冒烟 5 episode 完成后 → 正式评测 50 任务 × 100 episodes（后台跑，1-2 天）
 - 对比论文基准：Easy 92.9 / Hard 91.6
+
+---
+
+## 八、坑 11：评测中 ffmpeg 视频录制管道死锁（2026-08-31，已根治 ✅）
+
+### 现象
+正式评测（`stack_bowls_three` × 20 episodes）跑完 episode1 后**永久卡死**：client 进程 sleep 在 `poll`，其 ffmpeg 子进程 sleep 在 `futex`、**CPU 时间 0 秒**，2.5 小时无进展；client↔server 的 websocket 仍 ESTAB（连接没断，不是网络问题）。
+
+### 定位过程（证据链）
+1. client（`eval_polict_client_openpi`）运行 2.5h 只用了 4min CPU，`/proc/<pid>/wchan` = `poll_schedule_timeout`
+2. 子进程 ffmpeg（在转 `episode1.mp4`）CPU 0 秒，wchan = `futex_do_wait`（内部线程锁，**不是**在读 stdin）
+3. ffmpeg stdin 是 pipe（写端是 client 的 fd，喂 rawvideo 帧）；ffmpeg 卡锁不消费 → client 卡 poll 等 ffmpeg → **互相僵持**
+
+### 根因
+`_base_task.py` 里帧写入是**同步阻塞**的 `self.eval_video_ffmpeg.stdin.write(rgb.tobytes())`（每帧 225KB），而 ffmpeg stdin 管道缓冲仅 64KB。ffmpeg 转码一慢/卡住，管道写满，client 主流程就永久阻塞在 write 上，整个评测链停死在第 3 个 episode。
+
+### 修复（已根治 ✅）
+把「主流程同步写帧」改成「后台守护线程 + 有界队列」（改动文件 `RoboTwin/envs/_base_task.py`）：
+
+- `_set_eval_video_ffmpeg`：启动后台写入线程，从 `queue.Queue(maxsize=200)` 取帧写 stdin
+- 帧写入改为 `_push_video_frame`（`q.put_nowait`）：**永不阻塞主流程**，队列满只丢帧
+- `_del_eval_video_ffmpeg`：发结束哨兵 + `close()` stdin + `wait(timeout=10)` + 超时 `kill()` 兜底
+
+### 教训
+1. 「进程活着」≠「在干活」：判断卡死看 **CPU 时间增量 + wchan**，别只看 STAT
+2. 多进程链任何一环死锁都会拖死整条链；定位先画「谁喂谁、谁等谁」的 pipe 关系图（`/proc/<pid>/fd` + `ss`）
+3. 与坑 1（训练 Pool hang）同源：都是「多进程 + 管道」数据流死锁，本项目老毛病
