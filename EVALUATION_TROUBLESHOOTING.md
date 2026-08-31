@@ -221,3 +221,9 @@ pip install -e . --no-build-isolation
 1. 报错位置 ≠ 根因位置：`AttributeError left_planner` 是 warmup 崩溃的**下游**，必须读完整异常链（第一个 Traceback 才是根因）
 2. 评估「绕过」方案前先确认目标库有没有对应代码路径（grep `is_cuda` 断言/`device='cpu'` 支持与否，五分钟的事）
 3. torch 版本限制的是自己的算子，不是第三方扩展的 fatbin——这个边界想清楚，解法自然出现
+
+### 坑 8 追加：TORCH_CUDA_ARCH_LIST="12.0" 也会被 torch 2.4 拒绝
+
+- **现象**：`ValueError: Unknown CUDA arch (12.0) or GPU not supported`——arch 字符串到 `-gencode` 的映射表在 `torch/utils/cpp_extension.py` 里，torch 2.4 的表只到 9.0
+- **修复**：绕过 torch 的映射，直接在 **curobo 的 setup.py** 的 `extra_cuda_args["nvcc"]` 里加 `"-gencode=arch=compute_120,code=sm_120"`（nvcc 12.8 原生认识），同时 `TORCH_CUDA_ARCH_LIST="9.0"` 让 torch 自己那部分照常生成
+- **认知**：`TORCH_CUDA_ARCH_LIST` 不是透传字符串，是查表——表太老就拒绝新 arch；gencode 直传 setup.py 才是透传
