@@ -227,3 +227,13 @@ pip install -e . --no-build-isolation
 - **现象**：`ValueError: Unknown CUDA arch (12.0) or GPU not supported`——arch 字符串到 `-gencode` 的映射表在 `torch/utils/cpp_extension.py` 里，torch 2.4 的表只到 9.0
 - **修复**：绕过 torch 的映射，直接在 **curobo 的 setup.py** 的 `extra_cuda_args["nvcc"]` 里加 `"-gencode=arch=compute_120,code=sm_120"`（nvcc 12.8 原生认识），同时 `TORCH_CUDA_ARCH_LIST="9.0"` 让 torch 自己那部分照常生成
 - **认知**：`TORCH_CUDA_ARCH_LIST` 不是透传字符串，是查表——表太老就拒绝新 arch；gencode 直传 setup.py 才是透传
+
+### 坑 8 终局：curobo 编过 sm_120 后，torch 自带算子仍然炸——必须升 torch
+
+- **现象**：curobo 以 gencode sm_120 重编译成功（`nvidia_curobo-0.7.7.post1.dev0`），但导入时仍报 `no kernel image available`——这次炸点在 **torch 自带的 `torch.sign`/`torch.where`**（`normalize_quaternion` TorchScript 里调用）
+- **实测确认**：`torch.cuda.get_arch_list()` = `['sm_50'...'sm_90']`——torch 2.4.1+cu121 二进制里根本没有 sm_120 内核，**这部分无法靠重编译第三方扩展解决**
+- **修复**：升级 torch 到 **2.7.1+cu128**（官方 PyTorch cu128 源，原生含 sm_120；RoboTwin requirements 的 `torch==2.4.1` 锁定被打破，属必要偏离，需回归验证 sapien/mplib/open3d 兼容性）
+- **完整架构结论（三层各管各的）**：
+  1. torch 自带算子 → 由 torch 二进制的 arch 列表决定 → 必须 cu128 版 torch
+  2. curobo 自定义 CUDA 扩展 → 由编译时 gencode 决定 → nvcc 12.8 + `-gencode compute_120`
+  3. 两者可以错开：curobo 编 sm_120 + torch cu128 才是完整解；只做其一都会在某一层炸
