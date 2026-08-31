@@ -257,3 +257,46 @@ pip install -e . --no-build-isolation
 | 10b | `FileNotFoundError: 'ffmpeg'` | 评测脚本把 episode 存视频，调系统 `ffmpeg`，机器没装 | 软链 imageio_ffmpeg 自带的二进制到 `~/bin/ffmpeg`（`imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2`），无需 sudo 装系统 ffmpeg |
 
 **核心认知**：curobo v0.7.7 这套老代码的依赖链上全是「版本被上游大改」的雷——warp 的 torch 子模块、ffmpeg 缺失，都是同一类「老代码 × 新依赖」的版本漂移，和坑 3（setuptools pkg_resources）、坑 6（curobov2）同源。
+
+---
+
+## 七、冒烟测试成功（2026-08-31 18:22）——评测链路全线打通 🎉
+
+### 里程碑
+评测 client 成功跑通 adjust_bottle 任务，episode 逐个执行、判定、保存视频：
+
+```
+results/stseed-10000/visualization/adjust_bottle/
+  0_Grab_the_plastic_drink_bottle..._True.mp4   ← episode 0 成功
+  1_Grab_the_smooth_bottle..._True.mp4          ← episode 1 成功
+  2_Lift_the_bottle_with_white_printed..._True.mp4  ← episode 2 成功
+```
+
+文件名末尾的 `True` = 该 episode 判定成功。视频实际路径在 **`~/RoboTwin/results/`**（脚本内部 `os.chdir(robowin_root)`，所以日志里的相对路径 `results/` 是相对 RoboTwin 目录）。
+
+### 完整的坑谱（共 10 个，按时间线）
+
+| # | 一句话 |
+|---|---|
+| 1 | 训练 Pool 多进程 hang → ThreadPool（issue #32）|
+| 2 | pytorch3d 编译缺 torch → `--no-build-isolation` |
+| 3 | sapien 缺 pkg_resources → setuptools<81 |
+| 4 | HF 下载 xet I/O error → HF_HUB_DISABLE_XET=1 |
+| 5 | client 参数 unrecognized → 全放 `--overrides` 后 |
+| 6 | curobo main 分支 API 不兼容 → checkout v0.7.7 |
+| 7 | CUDA 编译链五连坑（nvcc 12.1/头文件/gcc 13/fp4fp6/libcudart）|
+| 8 | Blackwell sm_120 无 CUDA 内核 → 升 torch 2.7.1+cu128 + gencode 直传 |
+| 9 | torch 升级连锁（镜像/ninja/crt 头/链接路径）|
+| 10 | warp.torch 版本漂移 + ffmpeg 缺失 |
+
+### 最终可复现的环境（robotwin 环境）
+
+- torch **2.7.1+cu128**（不是官方的 2.4.1，Blackwell 必需）
+- curobo **v0.7.7**（不是 main 的 curobov2），nvcc **12.8** 编译 sm_120
+- warp-lang **1.0.2**（不是 1.16）
+- setuptools **<81**、ninja、ffmpeg（软链 imageio_ffmpeg）
+- 关键环境变量：`CUDA_HOME=$CONDA_PREFIX`、`CPATH`（targets include + cccl）、`LIBRARY_PATH`（targets lib）、`LD_LIBRARY_PATH=/usr/lib64:/usr/lib`
+
+### 下一步
+- 冒烟 5 episode 完成后 → 正式评测 50 任务 × 100 episodes（后台跑，1-2 天）
+- 对比论文基准：Easy 92.9 / Hard 91.6
