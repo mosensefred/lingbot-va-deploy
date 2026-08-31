@@ -182,3 +182,42 @@ python -m evaluation.robotwin.eval_polict_client_openpi \
 
 **风险登记**：
 - torch 2.4.1 与 sm_120 不兼容（坑8）：curobo 若需 GPU 可能要走 CPU 回退
+
+---
+
+## 六、追加：坑 8 完整爆发与最终解法（2026-08-31）
+
+### 现象
+CPU 回退补丁（改 `TensorDeviceType` 默认 device + planner.py 去 `.cuda()`）**失败**——curobo 的运动学/碰撞内核是纯 CUDA 扩展（`kinematics_fused_kernel.cu`），`KinematicsFusedFunction` 硬性断言 `joint_vec.is_cuda()`，**没有 CPU 代码路径**。CPU 张量直接 INTERNAL ASSERT 崩溃，且该异常发生在 `CuroboPlanner.__init__` 的 warmup 里，导致 `left_planner` 属性从未赋值，后续 reset 报出误导性的 `AttributeError: no attribute 'left_planner'`（真实根因被异常链掩盖）。
+
+### 结构性认知（重要）
+```
+torch 2.4.1+cu121（Python 层运行时）──能加载──► 自定义 CUDA 扩展（.so 自带 fatbin）
+        │                                              │
+        └─ 自身内核只编到 sm_90                          └─ 只要重编译时编入 sm_120，
+           → torch.XXX CUDA 算子会炸                      就能在 Blackwell 上跑
+```
+**关键洞察**：`torch 2.4.1` 的限制只覆盖它**自带**的 CUDA 算子；pip 装的自定义扩展（curobo 的 kinematics/collision kernel）是**独立编译的 .so**，用什么 `-gencode` 编就在什么 GPU 上跑。所以不需要换 torch 版本，只需要**用支持 sm_120 的 nvcc 重编译 curobo**。
+
+### 最终解法
+```bash
+# 1. 升级 nvcc 到 12.8（支持 compute_120；注意先前的 12.1 连 sm_100 都不认识）
+conda install -n robotwin cuda-nvcc=12.8.93 -c nvidia -y
+
+# 2. 显式指定编译架构（否则 torch cpp_extension 按可见 GPU 自动探测，torch2.4 不认识 sm_120 会编错/漏编）
+export TORCH_CUDA_ARCH_LIST="12.0;9.0"
+
+# 3. 重编译（其余环境变量同坑 7 全家桶）
+pip uninstall -y nvidia_curobo
+pip install -e . --no-build-isolation
+```
+
+### 已撤销的中间方案
+- `curobo/types/base.py` 的 TensorDeviceType CPU 自动回退 → **已还原**（curobo 无 CPU 路径，回退必炸）
+- `planner.py` 传 `tensor_args=CPU` → **已还原**（同上）
+- `planner.py` 的 3 处 `.cuda()` 改为 `.to(tensor_args.device)` → **保留**（无害且更通用）
+
+### 教训
+1. 报错位置 ≠ 根因位置：`AttributeError left_planner` 是 warmup 崩溃的**下游**，必须读完整异常链（第一个 Traceback 才是根因）
+2. 评估「绕过」方案前先确认目标库有没有对应代码路径（grep `is_cuda` 断言/`device='cpu'` 支持与否，五分钟的事）
+3. torch 版本限制的是自己的算子，不是第三方扩展的 fatbin——这个边界想清楚，解法自然出现
