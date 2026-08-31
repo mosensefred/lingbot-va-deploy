@@ -12,6 +12,8 @@ LingBot-VA 部署、训练与二次开发记录。包含：从零部署、本地
 | [DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md) | 部署与运行清单（硬性门槛 / 安装 / 权重 / 配置 / 训练）|
 | [CLOUD_DEPLOY.md](CLOUD_DEPLOY.md) | 云上从零跑通 RoboTwin 评测指南 |
 | [cloud_robotwin_eval.sh](cloud_robotwin_eval.sh) | 一键云上评测脚本 |
+| [EVALUATION_SETUP.md](EVALUATION_SETUP.md) | 评测环境搭建记录（双环境架构 + 步骤清单）|
+| [EVALUATION_TROUBLESHOOTING.md](EVALUATION_TROUBLESHOOTING.md) | 🔥 **评测环境踩坑实录**（8 大坑：Pool hang / curobo 版本 / CUDA 编译链五连坑 + 方法论）|
 
 ### 2. 本地训练主线（RTX PRO 6000 单卡）
 
