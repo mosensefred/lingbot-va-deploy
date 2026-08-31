@@ -248,3 +248,12 @@ pip install -e . --no-build-isolation
 | 9d | JIT 链接 `cannot find -lcudart` | libcudart.so 真身在 targets 下，conda lib 里只有相对链接且缺开发链接 | `LIBRARY_PATH=$CONDA_PREFIX/targets/x86_64-linux/lib`（或在 conda lib 里补软链） |
 
 **核心认知**：torch 大版本升级后，所有 `pip install -e .` 装的 C++/CUDA 扩展都按新 ABI JIT 重编译一次；这是一次性的（编译产物会缓存到 `~/.cache/torch_extensions/`），但要把整条编译链（ninja/头文件/库路径）再喂饱一遍。
+
+### 坑 10：`AttributeError: module 'warp' has no attribute 'torch'` + `ffmpeg not found`（2026-08-31）
+
+| # | 报错 | 根因 | 修复 |
+|---|---|---|---|
+| 10a | `module 'warp' has no attribute 'torch'` | curobo v0.7.7 用 `warp.torch`（旧 warp-lang 1.0 API），但装到了 warp-lang 1.16（新 API 把 `warp.torch` 拆走了） | `pip install warp-lang==1.0.2` |
+| 10b | `FileNotFoundError: 'ffmpeg'` | 评测脚本把 episode 存视频，调系统 `ffmpeg`，机器没装 | 软链 imageio_ffmpeg 自带的二进制到 `~/bin/ffmpeg`（`imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2`），无需 sudo 装系统 ffmpeg |
+
+**核心认知**：curobo v0.7.7 这套老代码的依赖链上全是「版本被上游大改」的雷——warp 的 torch 子模块、ffmpeg 缺失，都是同一类「老代码 × 新依赖」的版本漂移，和坑 3（setuptools pkg_resources）、坑 6（curobov2）同源。
