@@ -237,3 +237,14 @@ pip install -e . --no-build-isolation
   1. torch 自带算子 → 由 torch 二进制的 arch 列表决定 → 必须 cu128 版 torch
   2. curobo 自定义 CUDA 扩展 → 由编译时 gencode 决定 → nvcc 12.8 + `-gencode compute_120`
   3. 两者可以错开：curobo 编 sm_120 + torch cu128 才是完整解；只做其一都会在某一层炸
+
+### 坑 9：torch 升级 2.7.1+cu128 引发的连锁反应（2026-08-31）
+
+| # | 报错 | 根因 | 修复 |
+|---|---|---|---|
+| 9a | 官方源 150KB/s，2GB 要 4 小时 | PyTorch 官方境外源慢 | **切阿里云镜像** `--find-links https://mirrors.aliyun.com/pytorch-wheels/cu128/`（注意：`--index-url` 指向该目录会报"找不到版本"，因为无 PEP 503 索引，必须用 find-links） |
+| 9b | curobo 扩展 `kinematics_fused_cu not found, JIT compiling` → `Ninja is required` | torch 大版本变了 → C++ 扩展 ABI 变 → 旧的 .so 不被加载，触发 JIT 重编译，而 ninja 没装 | `pip install ninja` |
+| 9c | JIT 编译 `crt/host_defines.h: No such file` | nvcc 12.8 的 conda 布局把 crt 头放 targets 下，g++ 编译器找不到 | 把 `targets/x86_64-linux/include/crt/*.h` 复制到 `$CONDA_PREFIX/include/crt/` |
+| 9d | JIT 链接 `cannot find -lcudart` | libcudart.so 真身在 targets 下，conda lib 里只有相对链接且缺开发链接 | `LIBRARY_PATH=$CONDA_PREFIX/targets/x86_64-linux/lib`（或在 conda lib 里补软链） |
+
+**核心认知**：torch 大版本升级后，所有 `pip install -e .` 装的 C++/CUDA 扩展都按新 ABI JIT 重编译一次；这是一次性的（编译产物会缓存到 `~/.cache/torch_extensions/`），但要把整条编译链（ninja/头文件/库路径）再喂饱一遍。
