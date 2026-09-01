@@ -37,27 +37,35 @@
 
 详细诊断与修复见 [EVALUATION_LOG.md](EVALUATION_LOG.md) 和 [EVALUATION_TROUBLESHOOTING.md](EVALUATION_TROUBLESHOOTING.md)。
 
-## 四、hanging_mug 失败原因分析（14/14 失败）
+## 四、hanging_mug 失败原因分析（双重原因，诊断日志精确定位）
 
-**结论：判定逻辑 bug（不是能力不足）** ✅ 已定位
+**最终结论**：hanging_mug 0% = **判定 bug（已修）+ 模型精细对准能力不足**，两者叠加。
 
-**bug 位置**（`envs/hanging_mug.py` 的 `check_success`）：
+### 原因一：判定 bug（已修复 ✅）
+
+`check_success` 用了「中点」而非「挂杆末端」：
 
 ```python
-rack_middle_pose = (rack_pose + rack_function_pose) / 2   # ⚠️ 用了「中点」
-return abs((mug_function_pose - rack_middle_pose)[:2]) < 0.02
+rack_middle_pose = (rack_pose + rack_function_pose) / 2   # ⚠️ 误用「中点」
 ```
 
-**根因**：
+挂杆末端相对架子中心偏移约 (6.5cm, 19.5cm)，中点离挂杆末端约 10cm，所以即使挂对位置也判失败。
 
-- 操作目标（`play_once`）是把杯子挂到**挂杆末端** `rack_function_pose`；
-- 判定却要求杯子在**架子和挂杆末端的「中点」** `rack_middle_pose` 的 2cm 内；
-- 挂杆末端相对架子中心偏移约 **(6.5cm, 19.5cm)**，中点离挂杆末端约 **10cm**，远超 2cm 容差；
-- 所以即使杯子精确挂在正确位置（挂杆末端），也会因离「中点」差 10cm 而被判失败 → 14/14 全失败。
+**修复**：`rack_middle_pose = np.array(rack_function_pose)`（对齐挂杆末端）。
 
-**修复**（一行）：`rack_middle_pose = rack_function_pose`（直接对齐挂杆末端）。
+### 原因二：修复后仍失败 —— 精细对准能力不足（4cm vs 2cm）
 
-> 之前曾误判为「模型精细操作能力不足」，实为判定位置用错（中点 vs 挂杆末端）。待修复后重跑验证。
+修复判定后重跑，诊断日志（check_success 打印杯柄 vs 挂杆距离）显示：
+
+```
+dist = 0.038~0.045m（3.8~4.5cm）  ← 杯柄离挂杆，稳定停在 4cm，无递减趋势
+mug_z = 0.87~0.88                 ← 高度够（>0.86）
+grip_open = True                  ← 右手松开
+```
+
+关键：**dist 稳定在 4cm，没有套上挂杆**（判定要求 <2cm）。说明模型能规划「把杯子举到挂杆附近」，但「最终精确对准（杯柄套到挂杆）」这一步做不到。
+
+**结论**：判定 bug 是真实的（修复前差 10cm 必挂），但修复后模型仍挂不上——精细对准精度只有 4cm，够不到 2cm 要求。这是模型能力的真实短板，非环境/判定问题。放宽容差会让「悬空 4cm」假成功，不可取。
 
 ## 五、数据文件结构
 
