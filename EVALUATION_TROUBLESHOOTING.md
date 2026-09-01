@@ -347,19 +347,23 @@ results/stseed-10000/visualization/adjust_bottle/
 
 ---
 
-## 十、坑 13：curobo 运动规划器 CUDA 内核卡死（进行中 ⏳）
+## 十、坑 13：sapien 相机渲染 get_picture 卡死（进行中 ⏳）
 
 ### 现象
-`scan_object` 评测卡死，client 冻结在 `step 426/500`，主线程 `poll_schedule_timeout` + 55 线程 `futex_do_wait`，CPU 时间 15 秒不涨。
+`scan_object` 评测卡死，client 冻结在 `step 426/500`，主线程 `poll_schedule_timeout` + 55 线程 `futex`，GPU 利用率仅 6%（空闲）。
 
-### 定位过程
-1. client 卡在 `take_action`（`action_type='ee'`）里，step 计数停在 426；
-2. `take_action` 调用 `self.robot.left_plan_path()` / `right_plan_path()`（`robot.py`）；
-3. 这两个方法调用 **curobo**（`left_planner.plan_path()`）做运动规划；
-4. curobo 的 CUDA 内核在 Blackwell (sm_120) 上卡死 → 主线程 poll + CUDA 线程 futex。
+### 定位过程（py-spy 一锤定音）
+用 `sudo py-spy dump --pid <client>` 看主线程 Python 栈：
+
+```
+_get_rgba (envs/camera/camera.py:335)   ← camera.get_picture("Color") 卡死
+get_rgba → get_rgb → get_obs → eval_policy
+```
+
+（之前误判为 curobo，实为相机渲染；py-spy 精确栈纠正了 `wchan`/`/proc` 的推断。）
 
 ### 根因
-**坑 8 的延续**：curobo 虽通过 `gencode` 重编译 + torch 升级「能跑」，但在某些规划场景（特定目标位姿/碰撞检测）下 CUDA 内核死锁。
+`sapien` 相机渲染 `camera.get_picture("Color")`（Vulkan）卡死。GPU 空闲说明渲染没在进行、卡在渲染前的等待——疑似 **CUDA 与 Vulkan 的 GPU 资源竞争**：server（LingBot-VA 推理）占 31GB 显存，client 同时跑 CUDA（curobo 规划）+ Vulkan（相机渲染），同一块 GPU 上两套栈竞争导致 get_picture 偶发卡死。
 
 ### 状态
-⏳ 进行中，待进一步定位触发场景与修复方案（候选：规划放子进程 + 超时；curobo 无 CPU 回退路径，见坑 8）。
+⏳ 偶发（前 8 个 episode 正常，第 9 个卡）。待定修复方向：相机渲染放独立线程/进程 + 超时；或 server/client 分卡。
