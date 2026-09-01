@@ -14,6 +14,10 @@ LingBot-VA 部署、训练与二次开发记录。包含：从零部署、本地
 | [cloud_robotwin_eval.sh](cloud_robotwin_eval.sh) | 一键云上评测脚本 |
 | [EVALUATION_SETUP.md](EVALUATION_SETUP.md) | 评测环境搭建记录（双环境架构 + 步骤清单）|
 | [EVALUATION_TROUBLESHOOTING.md](EVALUATION_TROUBLESHOOTING.md) | 🔥 **评测环境踩坑实录**（8 大坑：Pool hang / curobo 版本 / CUDA 编译链五连坑 + 方法论）|
+| [EVALUATION_RESULTS.md](EVALUATION_RESULTS.md) | 📊 评测结果 + hanging_mug 失败分析 |
+| [EVALUATION_LOG.md](EVALUATION_LOG.md) | 评测记录（进度 + 坑诊断）|
+| [SUMMARY.md](SUMMARY.md) | 完整评测总结 |
+| [VISUALIZATION.md](VISUALIZATION.md) | 🎨 可视化总览（架构图 / 流程图 / 时间线）|
 
 ### 2. 本地训练主线（RTX PRO 6000 单卡）
 

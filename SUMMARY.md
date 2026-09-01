@@ -62,19 +62,14 @@
 - **根因**：kill 卡死 client 时**漏 kill 旧脚本**，旧脚本 for 循环继续启动新 client，与我的新 client **同时连同一个 server**，并发调用 `infer` 踩坏 `streaming_vae` 共享状态。
 - **处理**：清理旧脚本 + client，只保留一个 client；受影响的两个任务需补跑。
 
-## 六、hanging_mug 0% 失败原因
+## 六、hanging_mug 0% 失败原因（双重原因）
 
-**判定逻辑**（`envs/hanging_mug.py` `check_success`）：杯子挂孔 xy 对齐架子中点 **< 2cm** + 高度 > 0.86 + 右手松开。
+**判定 bug（已修）+ 模型精细对准能力不足**，两者叠加：
 
-**三任务判定难易对比**：
+1. **判定 bug**：`check_success` 误用「中点」`(rack_pose + rack_function_pose)/2` 而非「挂杆末端」，修复前差 10cm 必挂；
+2. **修复后仍失败**：诊断日志显示杯柄离挂杆稳定停在 **4cm**（判定要求 2cm），模型能举到附近、但套不上挂杆——精细对准精度不足。
 
-| 任务 | 判定核心 | 容差 | 结果 |
-|---|---|---|---|
-| adjust_bottle | 举起即成功 | x 偏移 15cm | 5/5 ✅ |
-| stack_bowls_three | 叠碗对齐 | xy 4cm | 3/3 ✅ |
-| hanging_mug | 挂孔精确对准挂钩 | **xy 2cm** | 0/14 ❌ |
-
-**结论**：不是判定 bug，是「任务精细度 × 判定严格」叠加——模型在「精确挂」这类精细操作上能力不足，2cm 容差对机器人精细操作偏紧。
+详见 [EVALUATION_RESULTS.md](EVALUATION_RESULTS.md) 第四章。
 
 ## 七、代码改动详情
 
