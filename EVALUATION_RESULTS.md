@@ -2,46 +2,50 @@
 
 > 记录 LingBot-VA 在 RoboTwin 仿真环境上的评测结果。
 > 评测进行中：5 任务 × 各 20 episodes，随跑随更。
-> 说明：回放视频文件较大，**不上传 GitHub**，保存在本地（路径见「四、数据文件结构」）。
+> 说明：回放视频文件较大，**不上传 GitHub**，保存在本地（路径见文末）。
 
 ## 一、评测计划
 
 评测脚本 `run_eval_5tasks_20.sh`，5 个任务、每个 20 episodes（`--test_num 20`）：
 
-| # | 任务 | 说明 | 状态 |
-|---|---|---|---|
-| 1 | `stack_bowls_three` | 叠三个碗 | 🟢 进行中 |
-| 2 | `handover_block` | 递积木 | ⏳ 待跑 |
-| 3 | `hanging_mug` | 挂杯 | ⏳ 待跑 |
-| 4 | `scan_object` | 扫描物体 | ⏳ 待跑 |
-| 5 | `lift_pot` | 举锅 | ⏳ 待跑 |
+| # | 任务 | 说明 |
+|---|---|---|
+| 1 | `stack_bowls_three` | 叠三个碗 |
+| 2 | `handover_block` | 递积木 |
+| 3 | `hanging_mug` | 挂杯 |
+| 4 | `scan_object` | 扫描物体 |
+| 5 | `lift_pot` | 举锅 |
 
-## 二、已完成结果
+## 二、当前结果（截至 2026-09-01 09:23）
 
-### adjust_bottle（抓取/举起瓶子，5 episodes）
+| 任务 | 成功率 | 状态 |
+|---|---|---|
+| `adjust_bottle` | **5/5 = 100%** | ✅ 完成（更早单独跑的 5 episodes） |
+| `stack_bowls_three` | 3/3 = 100% | ⏸ 卡死前结果，待补跑 |
+| `handover_block` | — | ⏳ 待补跑（并发冲突导致假失败，无结果） |
+| `hanging_mug` | 0/1 = 0% | 🟢 进行中 |
+| `scan_object` | — | ⏳ 未开始 |
+| `lift_pot` | — | ⏳ 未开始 |
 
-| 指标 | 值 |
-|---|---|
-| 成功率 | **5 / 5 = 100%** |
-| res.json | [`results/adjust_bottle/res.json`](results/adjust_bottle/res.json) |
+> `stack_bowls_three` / `handover_block` 因「两个 client 并发连同一 server」导致 VAE 状态污染而假失败，计划用 `run_eval_2tasks.sh` 补跑。
 
-5 个任务变体（不同瓶子、左右臂）全部一次通过，回放视频本地保存（5 段，均 `_True`）。
+## 三、当天遇到的问题（简要）
 
-## 三、进行中
+- **坑 11**：ffmpeg 视频录制管道死锁 → 后台线程 + 有界队列（已修复）
+- **坑 12**：client↔server websocket 通信僵局 → `asyncio.to_thread`（已修复）
+- **并发 client**：漏 kill 旧脚本导致双 client 踩坏 VAE 状态 → 已清理，需补跑 2 任务
 
-### stack_bowls_three（叠碗，20 episodes）
-
-- 当前 `res.json`：1 / 1（部分结果，完整成功率待 20 episodes 跑完后统计）
-- 回放视频本地保存（含成功/失败，见文件名 `_True` / `_False` 后缀）
+详细诊断与修复见 [EVALUATION_LOG.md](EVALUATION_LOG.md) 和 [EVALUATION_TROUBLESHOOTING.md](EVALUATION_TROUBLESHOOTING.md)。
 
 ## 四、数据文件结构
 
-**已上传 GitHub**（小文件）：
+**已上传 GitHub**（小文件，`res.json`）：
 
 ```
 results/
-├── adjust_bottle/res.json     # { succ_num, total_num, succ_rate }
-└── stack_bowls_three/res.json
+├── adjust_bottle/res.json
+├── stack_bowls_three/res.json
+└── hanging_mug/res.json
 ```
 
 **回放视频本地保存**（不上传 GitHub）：
@@ -52,6 +56,4 @@ results/
 └── stack_bowls_three/  # 含 _True / _False
 ```
 
-> 训练 checkpoint 权重（5 个 step checkpoint，共 48GB）同样不上传，保存在本地
-> `/media/mosense/Data2TB/fred/lingbot-va-train-out/checkpoints/`。训练过程与 loss 分析见
-> [TRAINING_REPORT.md](TRAINING_REPORT.md)。
+> 训练 checkpoint 权重（48GB）也不上传，本地路径见 [TRAINING_REPORT.md](TRAINING_REPORT.md)。
