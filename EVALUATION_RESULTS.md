@@ -37,7 +37,32 @@
 
 详细诊断与修复见 [EVALUATION_LOG.md](EVALUATION_LOG.md) 和 [EVALUATION_TROUBLESHOOTING.md](EVALUATION_TROUBLESHOOTING.md)。
 
-## 四、数据文件结构
+## 四、hanging_mug 失败原因分析（14/14 失败）
+
+**判定逻辑**（`envs/hanging_mug.py` 的 `check_success`）：
+
+```
+mug_function_pose   = 杯子「挂孔」位置
+rack_middle_pose    = 架子挂钩中点
+eps = 0.02          # ⚠️ 2cm 容差
+成功 = 杯子挂孔 xy 对齐架子中点 < 2cm
+       and 高度 > 0.86
+       and 右手松开
+```
+
+**三任务判定难易对比**：
+
+| 任务 | 判定核心 | 容差 | 结果 |
+|---|---|---|---|
+| `adjust_bottle` | 举起即成功 | x 偏移 15cm + 高度 0.9 | 5/5 ✅ |
+| `stack_bowls_three` | 叠碗对齐 | xy 4cm | 3/3 ✅ |
+| `hanging_mug` | 挂孔精确对准挂钩 | **xy 2cm** | 0/14 ❌ |
+
+**结论**：不是判定 bug，是「任务精细度 × 判定严格」双重叠加——hanging_mug 要求把杯子挂孔精确套到架子挂钩（2cm 内），是三个任务里最难且判定最严的；模型在「精确挂」这类精细操作上能力不足（操作没做到位），2cm 容差对机器人精细操作也偏紧。
+
+> 失败回放拼接图：本地 `/home/mosense/hanging_mug_fail_analysis.jpg`（3 个失败视频末 2 秒，每 4 帧）。
+
+## 五、数据文件结构
 
 **已上传 GitHub**（小文件，`res.json`）：
 
