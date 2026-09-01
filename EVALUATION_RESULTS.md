@@ -39,28 +39,25 @@
 
 ## 四、hanging_mug 失败原因分析（14/14 失败）
 
-**判定逻辑**（`envs/hanging_mug.py` 的 `check_success`）：
+**结论：判定逻辑 bug（不是能力不足）** ✅ 已定位
 
-```
-mug_function_pose   = 杯子「挂孔」位置
-rack_middle_pose    = 架子挂钩中点
-eps = 0.02          # ⚠️ 2cm 容差
-成功 = 杯子挂孔 xy 对齐架子中点 < 2cm
-       and 高度 > 0.86
-       and 右手松开
+**bug 位置**（`envs/hanging_mug.py` 的 `check_success`）：
+
+```python
+rack_middle_pose = (rack_pose + rack_function_pose) / 2   # ⚠️ 用了「中点」
+return abs((mug_function_pose - rack_middle_pose)[:2]) < 0.02
 ```
 
-**三任务判定难易对比**：
+**根因**：
 
-| 任务 | 判定核心 | 容差 | 结果 |
-|---|---|---|---|
-| `adjust_bottle` | 举起即成功 | x 偏移 15cm + 高度 0.9 | 5/5 ✅ |
-| `stack_bowls_three` | 叠碗对齐 | xy 4cm | 3/3 ✅ |
-| `hanging_mug` | 挂孔精确对准挂钩 | **xy 2cm** | 0/14 ❌ |
+- 操作目标（`play_once`）是把杯子挂到**挂杆末端** `rack_function_pose`；
+- 判定却要求杯子在**架子和挂杆末端的「中点」** `rack_middle_pose` 的 2cm 内；
+- 挂杆末端相对架子中心偏移约 **(6.5cm, 19.5cm)**，中点离挂杆末端约 **10cm**，远超 2cm 容差；
+- 所以即使杯子精确挂在正确位置（挂杆末端），也会因离「中点」差 10cm 而被判失败 → 14/14 全失败。
 
-**结论**：不是判定 bug，是「任务精细度 × 判定严格」双重叠加——hanging_mug 要求把杯子挂孔精确套到架子挂钩（2cm 内），是三个任务里最难且判定最严的；模型在「精确挂」这类精细操作上能力不足（操作没做到位），2cm 容差对机器人精细操作也偏紧。
+**修复**（一行）：`rack_middle_pose = rack_function_pose`（直接对齐挂杆末端）。
 
-> 失败回放拼接图：本地 `/home/mosense/hanging_mug_fail_analysis.jpg`（3 个失败视频末 2 秒，每 4 帧）。
+> 之前曾误判为「模型精细操作能力不足」，实为判定位置用错（中点 vs 挂杆末端）。待修复后重跑验证。
 
 ## 五、数据文件结构
 
