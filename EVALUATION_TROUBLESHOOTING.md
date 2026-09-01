@@ -327,3 +327,39 @@ results/stseed-10000/visualization/adjust_bottle/
 1. 「进程活着」≠「在干活」：判断卡死看 **CPU 时间增量 + wchan**，别只看 STAT
 2. 多进程链任何一环死锁都会拖死整条链；定位先画「谁喂谁、谁等谁」的 pipe 关系图（`/proc/<pid>/fd` + `ss`）
 3. 与坑 1（训练 Pool hang）同源：都是「多进程 + 管道」数据流死锁，本项目老毛病
+
+---
+
+## 九、坑 12：client↔server websocket 通信僵局（已修复 ✅）
+
+### 现象
+第 3 个 episode 卡死，client 卡在 `infer()` 的 `recv()`、server 卡在 `ep_poll`，两边互等，连接 ESTAB 不断、socket Recv-Q/Send-Q 均 0。
+
+### 根因
+`websocket_policy_server.py` 的 async `_handler` 里，`self._policy.infer(obs)` 是**同步阻塞**的 GPU 推理（单次几分钟），直接在 asyncio 事件循环里调用 → 推理期间事件循环冻结，底层 websocket 事件停摆，与同步 client 失步。
+
+### 修复（双保险）
+- **server 端**：`action = await asyncio.to_thread(self._policy.infer, obs)`，推理丢进线程池不阻塞事件循环；
+- **client 端**：`recv(timeout=300)` 超时 + 自动重连自愈（`websocket_client_policy.py`）。
+
+### 教训
+同步阻塞塞进异步/通信链路，是这个项目反复出现的老毛病（坑 1/11/12 同源）。
+
+---
+
+## 十、坑 13：curobo 运动规划器 CUDA 内核卡死（进行中 ⏳）
+
+### 现象
+`scan_object` 评测卡死，client 冻结在 `step 426/500`，主线程 `poll_schedule_timeout` + 55 线程 `futex_do_wait`，CPU 时间 15 秒不涨。
+
+### 定位过程
+1. client 卡在 `take_action`（`action_type='ee'`）里，step 计数停在 426；
+2. `take_action` 调用 `self.robot.left_plan_path()` / `right_plan_path()`（`robot.py`）；
+3. 这两个方法调用 **curobo**（`left_planner.plan_path()`）做运动规划；
+4. curobo 的 CUDA 内核在 Blackwell (sm_120) 上卡死 → 主线程 poll + CUDA 线程 futex。
+
+### 根因
+**坑 8 的延续**：curobo 虽通过 `gencode` 重编译 + torch 升级「能跑」，但在某些规划场景（特定目标位姿/碰撞检测）下 CUDA 内核死锁。
+
+### 状态
+⏳ 进行中，待进一步定位触发场景与修复方案（候选：规划放子进程 + 超时；curobo 无 CPU 回退路径，见坑 8）。
